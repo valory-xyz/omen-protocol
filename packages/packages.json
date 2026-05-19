@@ -1,0 +1,12 @@
+{
+    "dev": {
+        "contract/valory/realitio/0.1.0": "bafybeidva2wdv2vuswrrkjoanccysuhcsmq3ojvn2kf5ufonxbvfgvhvsm",
+        "contract/valory/realitio_proxy/0.1.0": "bafybeiagm5qkgcmkhpyxvhptxcysvtu2pwgg4gcjt3yplczcqev3kt3zzy",
+        "contract/valory/conditional_tokens/0.1.0": "bafybeifkrnpjm3a7lupjn2w3widfei4to2xk6tt2dhalllgso52vmeaayy",
+        "contract/valory/fpmm/0.1.0": "bafybeiceekyspyvqkzint67psqumphhmiiwkcy5satkm4kzo62i56mbkcm",
+        "skill/valory/omen_ct_redeem_tokens_abci/0.1.0": "bafybeiaejs4ol2jti2wqsjcrtqkkiiquyr7jdvi3uyfw2nztnxybnf4m54",
+        "skill/valory/omen_fpmm_remove_liquidity_abci/0.1.0": "bafybeidvphcps6qfx6odrgtslims2olvszdxngmjuyery5bg5djimawfhe",
+        "skill/valory/omen_realitio_withdraw_bonds_abci/0.1.0": "bafybeieiiouhfaky3lvy6bquvtb4doj6n55xlkng6dt7dahvjblti3mnu4"
+    },
+    "third_party": {}
+}
