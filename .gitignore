@@ -1,0 +1,37 @@
+.mypy_cache
+.DS_Store
+.pytest_cache
+coverage.xml
+.tox
+.coverage
+htmlcov
+*.egg-info
+.venv
+packages/__pycache__
+packages/valory/__pycache__
+packages/valory/contracts/__pycache__
+packages/valory/skills/__pycache__
+
+# Third-party packages synced from IPFS (open-autonomy + open-aea upstreams).
+# The 4 contracts and 3 skills owned by this repo are tracked normally.
+packages/open_aea
+packages/valory/connections
+packages/valory/protocols
+packages/valory/contracts/gnosis_safe
+packages/valory/contracts/gnosis_safe_proxy_factory
+packages/valory/contracts/multisend
+packages/valory/contracts/erc20
+packages/valory/contracts/ierc1155
+packages/valory/contracts/service_registry
+packages/valory/skills/abstract_abci
+packages/valory/skills/abstract_round_abci
+packages/valory/skills/registration_abci
+packages/valory/skills/reset_pause_abci
+packages/valory/skills/termination_abci
+packages/valory/skills/transaction_settlement_abci
+
+leak_report
+__pycache__
+.env
+.env.*
+.idea
