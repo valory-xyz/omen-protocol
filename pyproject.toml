@@ -1,0 +1,76 @@
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "omen-protocol"
+version = "0.1.0"
+description = "Shared Omen prediction market contracts and recovery skills for Olas agents"
+requires-python = "<3.15,>=3.10"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = [
+    "open-autonomy[cli]==0.21.22",
+    "hypothesis==6.21.6",
+    "grpcio==1.78.0",
+    "aiohttp<4.0.0,>=3.8.5",
+    "asn1crypto<1.5.0,>=1.4.0",
+    "open-aea-ledger-ethereum==2.2.6",
+    "protobuf>=5,<6",
+    "open-aea-helpers==0.21.22",
+    "open-aea-test-autonomy==0.21.22",
+    "ipfshttpclient==0.8.0a2",
+    "open-aea-cli-ipfs==2.2.6",
+    "requests==2.32.5",
+    "pytest>=8.2,<10",
+    "pytest-asyncio==1.3.0",
+    "ecdsa>=0.15",
+    "open-aea-ledger-cosmos==2.2.6",
+    "certifi==2026.2.25",
+    "multidict==6.7.1",
+    "py-eth-sig-utils==0.4.0",
+    "web3<8,>=7.0.0",
+    "eth_typing==5.2.1",
+    "pytz==2022.2.1",
+    "typing_extensions<=4.15.0,>=3.10.0.2",
+    "hexbytes==1.3.1",
+    "packaging==26",
+    "eth-utils==5.3.0",
+    "setuptools>=78.0.1,<79",
+    "py-multibase==1.0.3",
+    "py-multicodec==0.2.1",
+]
+
+[project.urls]
+Repository = "https://github.com/valory-xyz/omen-protocol"
+
+[dependency-groups]
+dev = [
+    "tomte[cli, tests] @ git+https://github.com/valory-xyz/tomte.git@0819eea387c622cc53b398a2d3ea86e94a55cf82",
+    "pip>=24.0",
+]
+
+[tool.uv]
+default-groups = "all"
+prerelease = "allow"
+
+[tool.tomte]
+# Third-party packages on disk come from the auto-prepended open-autonomy
+# and open-aea upstreams (abstract_round_abci, transaction_settlement_abci,
+# contract_api, gnosis_safe, multisend). No additional pins needed.
+upstream_pins = []
+gitleaks_extra_regexes = [
+    # IPFS CIDv1 hashes used by Open Autonomy package fingerprints.
+    "bafybei[a-z2-7]{52}",
+    # ABCI consensus payload constants are SCREAMING_SNAKE_CASE strings
+    # ending in _PAYLOAD; high entropy trips gitleaks' generic-api-key rule.
+    "[A-Z][A-Z0-9_]+_PAYLOAD",
+    # ABCI synchronized_data attributes use the framework-mandated
+    # `participant_to_<name>` namespace; high-entropy snake_case identifier.
+    "participant_to_[a-z][a-z0-9_]+",
+]
+tomte_dep_pin = " @ git+https://github.com/valory-xyz/tomte.git@0819eea387c622cc53b398a2d3ea86e94a55cf82"
+
+[tool.uv.build-backend]
+module-name = ["packages"]
+module-root = ""
