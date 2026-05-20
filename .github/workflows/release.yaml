@@ -22,6 +22,7 @@ jobs:
           image: valory/open-autonomy-user:0.21.22
           options: -v ${{ github.workspace }}:/work
           run: |
+            set -euo pipefail
             echo "Pushing Packages"
             cd /work
             autonomy init --reset --author valory --ipfs --remote

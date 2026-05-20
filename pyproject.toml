@@ -68,9 +68,6 @@ gitleaks_extra_regexes = [
     # ABCI synchronized_data attributes use the framework-mandated
     # `participant_to_<name>` namespace; high-entropy snake_case identifier.
     "participant_to_[a-z][a-z0-9_]+",
-    # On-chain identifiers follow OA convention
-    # `<name>_(contract|address|proxy|factory|tracker|oracle)`.
-    "[a-z][a-z0-9_]*_(?:contract|address|proxy|factory|tracker|oracle)",
 ]
 tomte_dep_pin = " @ git+https://github.com/valory-xyz/tomte.git@0819eea387c622cc53b398a2d3ea86e94a55cf82"
 
