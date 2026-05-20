@@ -77,8 +77,11 @@ push-packages:
 	make clean && \
 	autonomy push-all
 
-.PHONY: generators
-generators:
+.PHONY: abci-docstrings
+abci-docstrings:
 	tomte tox -e abci-docstrings
+
+.PHONY: generators
+generators: abci-docstrings
 	tomte format-copyright --author valory
 	autonomy packages lock
