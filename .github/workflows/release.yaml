@@ -16,13 +16,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python-versions }}
       - uses: addnab/docker-run-action@v3
         with:
-            image: valory/open-autonomy-user:0.21.22
-            options: -v ${{ github.workspace }}:/work
-            run: |
-              echo "Pushing Packages"
-              cd /work
-              autonomy init --reset --author valory --ipfs --remote
-              autonomy push-all
+          image: valory/open-autonomy-user:0.21.22
+          options: -v ${{ github.workspace }}:/work
+          run: |
+            echo "Pushing Packages"
+            cd /work
+            export AUTHOR=$(grep 'service' packages/packages.json | awk -F/ '{print $2}' | head -1)
+            autonomy init --reset --author $AUTHOR --ipfs --remote
+            autonomy push-all

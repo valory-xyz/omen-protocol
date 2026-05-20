@@ -8,8 +8,7 @@ The following table shows which versions of `omen-protocol` are currently being 
 
 | Version | Supported          |
 |---------|--------------------|
-| `n/a`   | :white_check_mark: |
-| `n/a`   | :x:                |
+| `0.1.0` | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
