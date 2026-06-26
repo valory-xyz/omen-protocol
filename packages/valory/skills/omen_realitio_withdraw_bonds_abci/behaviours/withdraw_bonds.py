@@ -174,7 +174,27 @@ class RealitioWithdrawBondsBehaviour(RealitioWithdrawBondsBaseBehaviour):
         # claimable (settled by an earlier successful multisend, or
         # otherwise no longer in the result set) are dropped here so
         # the cache cannot grow unbounded.
-        cache: Dict[str, Any] = self.context.state.realitio_claim_build_cache
+        #
+        # N>1 consensus safety: this cache lives on the per-agent in-
+        # memory ``SharedState``, not on the consensus-replicated
+        # ``SynchronizedData``. ``RealitioWithdrawBondsRound`` is a
+        # ``CollectSameUntilThresholdRound`` whose ``selection_key``
+        # requires every participating agent to vote the SAME
+        # ``most_voted_tx_hash``. In single-agent services this is
+        # trivially safe (the only payload is the round's quorum).
+        # In multi-agent deployments the cache AMPLIFIES (but does
+        # not introduce) the pre-existing subgraph-replica-divergence
+        # risk: if two agents query different TheGraph replicas and
+        # see different ``unique_responses`` orderings or membership,
+        # they will vote different ``tx_hash``es and the round emits
+        # ``NO_MAJORITY``. Without the cache the divergence clears
+        # naturally on the next cycle once replicas converge; with
+        # the cache a stale entry on one agent persists for as long
+        # as the subgraph still lists the question on that agent's
+        # replica. Future multi-agent consumers should either pin a
+        # single subgraph endpoint across agents, or move the cache
+        # into consensus state (heavier change, not in this PR).
+        cache: Dict[str, Dict[str, Any]] = self.context.state.realitio_claim_build_cache
         claimable_ids = {resp["question"]["id"] for resp in unique_responses}
         evicted = [qid for qid in cache if qid not in claimable_ids]
         for qid in evicted:

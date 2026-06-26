@@ -58,7 +58,13 @@ class SharedState(BaseSharedState):
         # question no longer appears in the subgraph's claimable set
         # (settled by an earlier successful multisend, or otherwise no
         # longer relevant).
-        self.realitio_claim_build_cache: Dict[str, Any] = {}
+        #
+        # Type is ``Dict[str, Dict[str, Any]]`` (not ``Dict[str, Any]``)
+        # so that a future contributor cannot silently insert a non-dict
+        # sentinel (e.g. ``None`` to mean "permanently skip"); the cache
+        # contract is "every value is a fully-formed claim tx dict ready
+        # to be passed to the multisend builder".
+        self.realitio_claim_build_cache: Dict[str, Dict[str, Any]] = {}
 
 
 class RealitioWithdrawBondsParams(BaseParams):
