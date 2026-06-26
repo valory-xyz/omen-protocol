@@ -61,6 +61,12 @@ class TestRealitioWithdrawBondsBehaviour:
         )
         context_mock.state.synchronized_data = MagicMock()
         context_mock.state.synchronized_data.safe_contract_address = "0xSafe"
+        # Resume-cache for _build_claim_txs: seeded as an empty dict so
+        # that the production code's ``cache.get(qid)`` returns ``None``
+        # (cache miss) rather than another MagicMock; per-test overrides
+        # pre-populate this dict to exercise the cache-hit / eviction
+        # paths.
+        context_mock.state.realitio_claim_build_cache = {}
         context_mock.benchmark_tool = MagicMock()
         context_mock.agent_address = "0x1234567890123456789012345678901234567890"
         context_mock.realitio_subgraph = MagicMock()
@@ -624,6 +630,110 @@ class TestRealitioWithdrawBondsBehaviour:
             gen = self.behaviour._build_claim_txs()
             result = exhaust_gen(gen)
         assert result == []
+
+    # ─── resume cache (timeout recovery) ─────────────────────────────────────
+
+    def test_build_claim_txs_caches_built_claim_for_next_cycle(self) -> None:
+        """A freshly built claim is stored in the SharedState cache.
+
+        Regression for the bond-recovery timeout bug: the build chain in
+        ``_try_build_single_claim`` is RPC-heavy and used to be discarded
+        when the round timed out before settling. The cache lets a
+        subsequent cycle reuse the build instead of re-running the chain.
+        """
+        responses = [
+            {
+                "question": {"id": "0xrA-0xqA", "createdBlock": "111"},
+                "bond": "100",
+            },
+        ]
+        claim_tx = {"to": "0xR", "data": "0xclaim", "value": 0}
+        cache = self.behaviour.context.state.realitio_claim_build_cache
+        assert cache == {}
+
+        with (
+            patch.object(
+                self.behaviour, "_get_claimable_responses", new=make_gen(responses)
+            ),
+            patch.object(
+                self.behaviour, "_try_build_single_claim", new=make_gen(claim_tx)
+            ),
+        ):
+            gen = self.behaviour._build_claim_txs()
+            result = exhaust_gen(gen)
+
+        assert result == [claim_tx]
+        assert cache == {"0xrA-0xqA": claim_tx}
+
+    def test_build_claim_txs_reuses_cached_claim_skipping_rpc_chain(self) -> None:
+        """A question already in the cache reuses the cached tx; build chain is not invoked.
+
+        Falsifiable: if the cache lookup is removed, ``_try_build_single_claim``
+        gets called and ``call_count`` becomes 1 instead of 0.
+        """
+        responses = [
+            {
+                "question": {"id": "0xrA-0xqCached", "createdBlock": "111"},
+                "bond": "100",
+            },
+        ]
+        cached_tx = {"to": "0xR", "data": "0xcached", "value": 0}
+        cache = self.behaviour.context.state.realitio_claim_build_cache
+        cache["0xrA-0xqCached"] = cached_tx
+        call_count = 0
+
+        def counting_try_build(_: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return {"to": "0xR", "data": "0xunexpected", "value": 0}
+            yield  # noqa
+
+        with (
+            patch.object(
+                self.behaviour, "_get_claimable_responses", new=make_gen(responses)
+            ),
+            patch.object(
+                self.behaviour, "_try_build_single_claim", new=counting_try_build
+            ),
+        ):
+            gen = self.behaviour._build_claim_txs()
+            result = exhaust_gen(gen)
+
+        assert result == [cached_tx]
+        assert call_count == 0
+        # Cache entry persists across the cycle; eviction is keyed off
+        # the question disappearing from the subgraph, not off use.
+        assert cache == {"0xrA-0xqCached": cached_tx}
+
+    def test_build_claim_txs_evicts_cache_entries_no_longer_claimable(self) -> None:
+        """Cache entries whose question_id is no longer in the subgraph result are evicted.
+
+        This is the cache's self-cleanup mechanism: once a previously
+        cached claim settles on-chain, the subgraph drops the question
+        (its ``historyHash`` becomes zero) and the entry must leave the
+        cache so it cannot grow unbounded.
+        """
+        responses = [
+            {
+                "question": {"id": "0xrA-0xqStillClaimable", "createdBlock": "111"},
+                "bond": "100",
+            },
+        ]
+        cache = self.behaviour.context.state.realitio_claim_build_cache
+        cache["0xrA-0xqAlreadySettled"] = {"to": "0xR", "data": "0xstale", "value": 0}
+        cache["0xrA-0xqStillClaimable"] = {"to": "0xR", "data": "0xkeep", "value": 0}
+
+        with (
+            patch.object(
+                self.behaviour, "_get_claimable_responses", new=make_gen(responses)
+            ),
+            patch.object(self.behaviour, "_try_build_single_claim", new=make_gen(None)),
+        ):
+            gen = self.behaviour._build_claim_txs()
+            exhaust_gen(gen)
+
+        assert "0xrA-0xqAlreadySettled" not in cache
+        assert "0xrA-0xqStillClaimable" in cache
 
     # ─── _get_claimable_responses (subgraph filter, query shape) ─────────────
 

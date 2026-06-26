@@ -163,18 +163,45 @@ class RealitioWithdrawBondsBehaviour(RealitioWithdrawBondsBaseBehaviour):
             seen_question_ids.add(qid)
             unique_responses.append(resp)
 
+        # Resume-after-timeout cache. The whole ``_prepare_multisend``
+        # chain runs inline within a single round's ``round_timeout``;
+        # if the timeout fires (RPC slow, queue large, transient TM
+        # reset shifting the round clock) the payload is discarded and
+        # all per-claim build work is wasted. The shared cache lets a
+        # subsequent cycle reuse claim txs already built for the same
+        # question, so progress is monotonic regardless of timing.
+        # Eviction is driven by the subgraph: questions no longer
+        # claimable (settled by an earlier successful multisend, or
+        # otherwise no longer in the result set) are dropped here so
+        # the cache cannot grow unbounded.
+        cache: Dict[str, Any] = self.context.state.realitio_claim_build_cache
+        claimable_ids = {resp["question"]["id"] for resp in unique_responses}
+        evicted = [qid for qid in cache if qid not in claimable_ids]
+        for qid in evicted:
+            del cache[qid]
+
         batch_size = self.params.realitio_withdraw_bonds_batch_size
         txs: List[Dict[str, Any]] = []
+        hits = 0
         for resp in unique_responses:
             if len(txs) >= batch_size:
                 break
+            qid = resp["question"]["id"]
+            cached_tx = cache.get(qid)
+            if cached_tx is not None:
+                txs.append(cached_tx)
+                hits += 1
+                continue
             claim_tx = yield from self._try_build_single_claim(resp)
             if claim_tx is not None:
+                cache[qid] = claim_tx
                 txs.append(claim_tx)
 
         self.context.logger.info(
             f"{SKILL_LOG_PREFIX} fetched {len(responses)} responses "
-            f"({len(unique_responses)} unique questions), built {len(txs)} claim txs"
+            f"({len(unique_responses)} unique questions), built {len(txs)} "
+            f"claim txs (cache: {hits} hit, {len(evicted)} evicted, "
+            f"{len(cache)} entries retained)"
         )
         return txs
 
