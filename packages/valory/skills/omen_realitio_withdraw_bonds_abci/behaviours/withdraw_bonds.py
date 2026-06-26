@@ -163,25 +163,111 @@ class RealitioWithdrawBondsBehaviour(RealitioWithdrawBondsBaseBehaviour):
             seen_question_ids.add(qid)
             unique_responses.append(resp)
 
+        # Resume-after-timeout cache. The whole ``_prepare_multisend``
+        # chain runs inline within a single round's ``round_timeout``;
+        # if the timeout fires (RPC slow, queue large, transient TM
+        # reset shifting the round clock) the payload is discarded and
+        # all per-claim build work is wasted. The shared cache lets a
+        # subsequent cycle reuse claim txs already built for the same
+        # question, so progress is monotonic regardless of timing.
+        # Eviction is driven by the subgraph: questions no longer
+        # claimable (settled by an earlier successful multisend, or
+        # otherwise no longer in the result set) are dropped here so
+        # the cache cannot grow unbounded.
+        #
+        # Stale-cache safety: ``_simulate_claim`` is re-run on every
+        # cache hit. TheGraph indexing can lag behind on-chain state,
+        # so a question already claimed in a previous multisend may
+        # still appear in ``unique_responses`` for a cycle or two and
+        # avoid the subgraph-driven eviction above. Without re-
+        # validation the cached ``claimWinnings`` calldata would be
+        # re-served and would revert on-chain; ``MultiSend.delegatecall``
+        # with ``requireSuccess=true`` would then revert the ENTIRE
+        # batch, killing every other claim in the same multisend. Re-
+        # simulating is one ``eth_call`` per hit -- cheap relative to
+        # the full RPC build chain we're caching around -- and turns
+        # the rare-but-catastrophic "bad batch" into a "skip this
+        # claim, keep the rest" outcome.
+        #
+        # N>1 consensus safety: this cache lives on the per-agent in-
+        # memory ``SharedState``, not on the consensus-replicated
+        # ``SynchronizedData``. ``RealitioWithdrawBondsRound`` is a
+        # ``CollectSameUntilThresholdRound`` whose ``selection_key``
+        # is ``(tx_submitter, most_voted_tx_hash)``; quorum is a
+        # configured threshold (typically 2/3), not unanimity, so a
+        # single diverging agent does not by itself block consensus.
+        # In single-agent services this is trivially safe. In multi-
+        # agent deployments the cache AMPLIFIES (but does not
+        # introduce) the pre-existing subgraph-replica-divergence
+        # risk: cached entries on one agent persist for as long as
+        # that agent's replica keeps listing the question, extending
+        # any ``NO_MAJORITY`` window from "one cycle" to "until the
+        # replica converges". Multi-agent consumers should pin a
+        # single subgraph endpoint across agents or move the cache
+        # into consensus state.
+        cache: Dict[str, Dict[str, Any]] = self.context.state.realitio_claim_build_cache
+        claimable_ids = {resp["question"]["id"] for resp in unique_responses}
+        evicted = [qid for qid in cache if qid not in claimable_ids]
+        for qid in evicted:
+            del cache[qid]
+
         batch_size = self.params.realitio_withdraw_bonds_batch_size
         txs: List[Dict[str, Any]] = []
+        hits = 0
+        stale_evictions = 0
         for resp in unique_responses:
             if len(txs) >= batch_size:
+                # Defensive: ``unique_responses`` is already bounded
+                # by the subgraph query's ``first: $batch_size`` and
+                # dedup only shrinks it, so this is unreachable
+                # today. Kept as a guard against future decoupling
+                # of the loop cap from the subgraph cap.
                 break
-            claim_tx = yield from self._try_build_single_claim(resp)
-            if claim_tx is not None:
-                txs.append(claim_tx)
+            qid = resp["question"]["id"]
+            entry = cache.get(qid)
+            if entry is not None:
+                sim_ok = yield from self._simulate_claim(
+                    entry["qid_bytes"], entry["params"]
+                )
+                if sim_ok:
+                    txs.append(entry["tx"])
+                    hits += 1
+                    continue
+                # Cached calldata would revert on-chain now (almost
+                # always: prior settlement that the subgraph hasn't
+                # reindexed yet). Drop it and skip this question
+                # this cycle -- a fresh rebuild would re-simulate
+                # against the same on-chain state and fail
+                # identically.
+                del cache[qid]
+                stale_evictions += 1
+                continue
+            new_entry = yield from self._try_build_single_claim(resp)
+            if new_entry is not None:
+                cache[qid] = new_entry
+                txs.append(new_entry["tx"])
 
         self.context.logger.info(
             f"{SKILL_LOG_PREFIX} fetched {len(responses)} responses "
-            f"({len(unique_responses)} unique questions), built {len(txs)} claim txs"
+            f"({len(unique_responses)} unique questions), prepared "
+            f"{len(txs)} claim txs (cache: {hits} hit, {len(evicted)} "
+            f"evicted by subgraph, {stale_evictions} evicted as stale)"
         )
         return txs
 
     def _try_build_single_claim(
         self, resp: Dict[str, Any]
     ) -> Generator[None, None, Optional[Dict[str, Any]]]:
-        """Build a claimWinnings tx for one response, or None if it should be skipped."""
+        """Build a claimWinnings cache entry for one response.
+
+        Returns a cache-entry dict with shape
+        ``{"qid_bytes": bytes, "params": Tuple[...], "tx": Dict[str, Any]}``
+        on success, ``None`` on skip. The ``"tx"`` field is the
+        multisend operation dict the caller appends to the batch; the
+        ``"qid_bytes"`` and ``"params"`` fields are retained so the
+        ``_build_claim_txs`` resume cache can re-run ``_simulate_claim``
+        on later cycles without re-running the (expensive) full build.
+        """
         # Realitio subgraph composite ids are "{contract_address}-{question_id}".
         question = resp.get("question") or {}
         question_id_hex = question["id"].split("-")[-1]
@@ -223,7 +309,11 @@ class RealitioWithdrawBondsBehaviour(RealitioWithdrawBondsBaseBehaviour):
             f"{SKILL_LOG_PREFIX} claiming question {question_id_hex} "
             f"(bond: {wei_to_str(bond)})"
         )
-        return claim_tx
+        return {
+            "qid_bytes": question_id_bytes,
+            "params": claim_params,
+            "tx": claim_tx,
+        }
 
     def _get_claimable_responses(
         self,

@@ -19,7 +19,7 @@
 
 """Shared state and params for the omen_realitio_withdraw_bonds_abci skill."""
 
-from typing import Any, Type
+from typing import Any, Dict, Type
 
 from aea.exceptions import enforce
 
@@ -44,6 +44,32 @@ class SharedState(BaseSharedState):
     """Shared state of the skill."""
 
     abci_app_cls: Type[AbciApp] = OmenRealitioWithdrawBondsAbciApp
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize."""
+        super().__init__(*args, **kwargs)
+        # Per-question cache of pre-built claim entries, keyed by the
+        # subgraph response question id (composite "{contract}-{qid}").
+        # ``RealitioWithdrawBondsBehaviour._try_build_single_claim`` is
+        # RPC-heavy (eth_getLogs + eth_call simulation + safe-tx build);
+        # caching the result lets a round that times out before settling
+        # reuse the build on the next cycle instead of restarting from
+        # scratch.
+        #
+        # Each entry has the shape ``{"qid_bytes", "params", "tx"}``:
+        # ``"tx"`` is the multisend operation dict, ``"qid_bytes"`` and
+        # ``"params"`` are the inputs to ``_simulate_claim`` which is
+        # re-run on every cache hit to detect a cached calldata that
+        # would now revert on-chain (the subgraph can lag behind a
+        # prior successful settlement).
+        #
+        # Two eviction paths cooperate: (1) subgraph-driven -- entries
+        # whose question_id is no longer in the claimable set are
+        # dropped at the top of ``_build_claim_txs``; (2) stale-check
+        # -- entries whose ``_simulate_claim`` returns False are
+        # dropped at point of use. Together these bound the cache by
+        # the live WIP set.
+        self.realitio_claim_build_cache: Dict[str, Dict[str, Any]] = {}
 
 
 class RealitioWithdrawBondsParams(BaseParams):

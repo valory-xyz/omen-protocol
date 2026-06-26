@@ -70,3 +70,25 @@ def test_shared_state_abci_app_cls() -> None:
     )
 
     assert SharedState.abci_app_cls is OmenRealitioWithdrawBondsAbciApp
+
+
+def test_shared_state_initializes_empty_claim_build_cache() -> None:
+    """SharedState.__init__ provides an empty dict for the resume cache.
+
+    Regression: ``_build_claim_txs`` reads
+    ``self.context.state.realitio_claim_build_cache`` unconditionally
+    and iterates / mutates it; if the field were missing or non-dict
+    the first scan after startup would raise.
+    """
+    from packages.valory.skills.abstract_round_abci.models import (
+        SharedState as BaseSharedState,
+    )
+
+    # Skip the heavy ``BaseSharedState.__init__`` (which requires a full
+    # skill context) by stubbing it out, so we can exercise just the
+    # subclass's new initializer.
+    with patch.object(BaseSharedState, "__init__", lambda self, *_a, **_k: None):
+        instance = SharedState()
+    assert hasattr(instance, "realitio_claim_build_cache")
+    assert instance.realitio_claim_build_cache == {}
+    assert isinstance(instance.realitio_claim_build_cache, dict)
