@@ -48,22 +48,27 @@ class SharedState(BaseSharedState):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize."""
         super().__init__(*args, **kwargs)
-        # Per-question cache of pre-built claimWinnings tx dicts, keyed by
-        # the subgraph response question id (composite "{contract}-{qid}").
+        # Per-question cache of pre-built claim entries, keyed by the
+        # subgraph response question id (composite "{contract}-{qid}").
         # ``RealitioWithdrawBondsBehaviour._try_build_single_claim`` is
         # RPC-heavy (eth_getLogs + eth_call simulation + safe-tx build);
         # caching the result lets a round that times out before settling
         # reuse the build on the next cycle instead of restarting from
-        # scratch. Entries are evicted on each cycle when the underlying
-        # question no longer appears in the subgraph's claimable set
-        # (settled by an earlier successful multisend, or otherwise no
-        # longer relevant).
+        # scratch.
         #
-        # Type is ``Dict[str, Dict[str, Any]]`` (not ``Dict[str, Any]``)
-        # so that a future contributor cannot silently insert a non-dict
-        # sentinel (e.g. ``None`` to mean "permanently skip"); the cache
-        # contract is "every value is a fully-formed claim tx dict ready
-        # to be passed to the multisend builder".
+        # Each entry has the shape ``{"qid_bytes", "params", "tx"}``:
+        # ``"tx"`` is the multisend operation dict, ``"qid_bytes"`` and
+        # ``"params"`` are the inputs to ``_simulate_claim`` which is
+        # re-run on every cache hit to detect a cached calldata that
+        # would now revert on-chain (the subgraph can lag behind a
+        # prior successful settlement).
+        #
+        # Two eviction paths cooperate: (1) subgraph-driven -- entries
+        # whose question_id is no longer in the claimable set are
+        # dropped at the top of ``_build_claim_txs``; (2) stale-check
+        # -- entries whose ``_simulate_claim`` returns False are
+        # dropped at point of use. Together these bound the cache by
+        # the live WIP set.
         self.realitio_claim_build_cache: Dict[str, Dict[str, Any]] = {}
 
 

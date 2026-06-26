@@ -6,7 +6,7 @@
         "contract/valory/fpmm/0.1.0": "bafybeiceekyspyvqkzint67psqumphhmiiwkcy5satkm4kzo62i56mbkcm",
         "skill/valory/omen_ct_redeem_tokens_abci/0.1.0": "bafybeif6w2bplgceactukt5b6qpth5nxspdeljsxaywrlyxvymdxxiefsq",
         "skill/valory/omen_fpmm_remove_liquidity_abci/0.1.0": "bafybeibuldgtifqjst4oeremvl6huzvdnq36opgwv2wupsnplf4er5frpm",
-        "skill/valory/omen_realitio_withdraw_bonds_abci/0.1.0": "bafybeiay755bznwm56qxm4mgz66mwer3odmp5neqp23rs435obf3g42eam"
+        "skill/valory/omen_realitio_withdraw_bonds_abci/0.1.0": "bafybeiabqn6mcg4nw3mqbyxcuiyxgwlf7e2il3cj4awpmdi7bibqlwvklq"
     },
     "third_party": {
         "protocol/valory/contract_api/1.0.0": "bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la",

@@ -574,12 +574,13 @@ class TestRealitioWithdrawBondsBehaviour:
             {"question": {"id": "0xbbbb", "createdBlock": "222"}, "bond": "300"},
         ]
         claim_tx = {"to": "0xR", "data": "0xclaim", "value": 0}
+        entry = {"qid_bytes": b"\xaa" * 32, "params": ([], [], [], []), "tx": claim_tx}
         call_count = 0
 
         def counting_try_build(_: Any) -> Any:
             nonlocal call_count
             call_count += 1
-            return claim_tx
+            return entry
             yield  # noqa
 
         with (
@@ -604,11 +605,12 @@ class TestRealitioWithdrawBondsBehaviour:
             {"question": {"id": "0xbbbb", "createdBlock": "222"}, "bond": "200"},
         ]
         claim_tx = {"to": "0xR", "data": "0xclaim", "value": 0}
+        entry = {"qid_bytes": b"\xbb" * 32, "params": ([], [], [], []), "tx": claim_tx}
         seen_qids: list = []
 
         def record_try_build(resp: Any) -> Any:
             seen_qids.append(resp["question"].get("id"))
-            return claim_tx
+            return entry
             yield  # noqa
 
         with (
@@ -648,6 +650,11 @@ class TestRealitioWithdrawBondsBehaviour:
             },
         ]
         claim_tx = {"to": "0xR", "data": "0xclaim", "value": 0}
+        entry = {
+            "qid_bytes": b"\xaa" * 32,
+            "params": ([], [], [], []),
+            "tx": claim_tx,
+        }
         cache = self.behaviour.context.state.realitio_claim_build_cache
         assert cache == {}
 
@@ -656,20 +663,22 @@ class TestRealitioWithdrawBondsBehaviour:
                 self.behaviour, "_get_claimable_responses", new=make_gen(responses)
             ),
             patch.object(
-                self.behaviour, "_try_build_single_claim", new=make_gen(claim_tx)
+                self.behaviour, "_try_build_single_claim", new=make_gen(entry)
             ),
         ):
             gen = self.behaviour._build_claim_txs()
             result = exhaust_gen(gen)
 
         assert result == [claim_tx]
-        assert cache == {"0xrA-0xqA": claim_tx}
+        assert cache == {"0xrA-0xqA": entry}
 
     def test_build_claim_txs_reuses_cached_claim_skipping_rpc_chain(self) -> None:
         """A question already in the cache reuses the cached tx; build chain is not invoked.
 
         Falsifiable: if the cache lookup is removed, ``_try_build_single_claim``
-        gets called and ``call_count`` becomes 1 instead of 0.
+        gets called and ``call_count`` becomes 1 instead of 0. Also asserts
+        on the returned tx so a broken cache-read (returning nothing,
+        falling through to the mocked ``None``) would surface.
         """
         responses = [
             {
@@ -678,20 +687,32 @@ class TestRealitioWithdrawBondsBehaviour:
             },
         ]
         cached_tx = {"to": "0xR", "data": "0xcached", "value": 0}
+        cached_entry = {
+            "qid_bytes": b"\xcc" * 32,
+            "params": ([], [], [], []),
+            "tx": cached_tx,
+        }
         cache = self.behaviour.context.state.realitio_claim_build_cache
-        cache["0xrA-0xqCached"] = cached_tx
+        cache["0xrA-0xqCached"] = cached_entry
         call_count = 0
 
         def counting_try_build(_: Any) -> Any:
             nonlocal call_count
             call_count += 1
-            return {"to": "0xR", "data": "0xunexpected", "value": 0}
+            return {
+                "qid_bytes": b"\xff" * 32,
+                "params": ([], [], [], []),
+                "tx": {"to": "0xR", "data": "0xunexpected", "value": 0},
+            }
             yield  # noqa
 
         with (
             patch.object(
                 self.behaviour, "_get_claimable_responses", new=make_gen(responses)
             ),
+            # Cache hit triggers a stale-check simulation; mock True so
+            # the cached tx is used.
+            patch.object(self.behaviour, "_simulate_claim", new=make_gen(True)),
             patch.object(
                 self.behaviour, "_try_build_single_claim", new=counting_try_build
             ),
@@ -703,7 +724,52 @@ class TestRealitioWithdrawBondsBehaviour:
         assert call_count == 0
         # Cache entry persists across the cycle; eviction is keyed off
         # the question disappearing from the subgraph, not off use.
-        assert cache == {"0xrA-0xqCached": cached_tx}
+        assert cache == {"0xrA-0xqCached": cached_entry}
+
+    def test_build_claim_txs_revalidates_cache_hit_and_evicts_when_stale(self) -> None:
+        """A cache hit whose ``_simulate_claim`` returns False is evicted.
+
+        Regression for the multisend-atomicity hazard: if the subgraph
+        lags behind on-chain settlement, the cached calldata for a
+        question already claimed would revert on-chain when re-served,
+        and with ``MultiSend.delegatecall requireSuccess=true`` would
+        revert the ENTIRE batch (killing every other claim in it).
+        Re-simulating each cache hit and dropping the stale entry
+        contains the harm to "skip this claim, keep the rest".
+        """
+        responses = [
+            {
+                "question": {"id": "0xrA-0xqStale", "createdBlock": "111"},
+                "bond": "100",
+            },
+        ]
+        stale_entry = {
+            "qid_bytes": b"\xee" * 32,
+            "params": ([], [], [], []),
+            "tx": {"to": "0xR", "data": "0xstale", "value": 0},
+        }
+        cache = self.behaviour.context.state.realitio_claim_build_cache
+        cache["0xrA-0xqStale"] = stale_entry
+
+        with (
+            patch.object(
+                self.behaviour, "_get_claimable_responses", new=make_gen(responses)
+            ),
+            # Stale: simulation reports the cached calldata would revert.
+            patch.object(self.behaviour, "_simulate_claim", new=make_gen(False)),
+            # We must NOT rebuild this cycle -- a fresh build would
+            # re-simulate against the same on-chain state and fail
+            # identically. Asserts via the call counter below.
+            patch.object(self.behaviour, "_try_build_single_claim", new=make_gen(None)),
+        ):
+            gen = self.behaviour._build_claim_txs()
+            result = exhaust_gen(gen)
+
+        assert result == []
+        # Stale entry must be evicted (not just skipped) so it doesn't
+        # keep wasting an eth_call on every future cycle until the
+        # subgraph catches up.
+        assert "0xrA-0xqStale" not in cache
 
     def test_build_claim_txs_evicts_cache_entries_no_longer_claimable(self) -> None:
         """Cache entries whose question_id is no longer in the subgraph result are evicted.
@@ -712,6 +778,10 @@ class TestRealitioWithdrawBondsBehaviour:
         cached claim settles on-chain, the subgraph drops the question
         (its ``historyHash`` becomes zero) and the entry must leave the
         cache so it cannot grow unbounded.
+
+        Also asserts the still-claimable entry's tx is returned, so a
+        broken cache-read on the hit path can't silently pass this
+        test (per review).
         """
         responses = [
             {
@@ -719,20 +789,39 @@ class TestRealitioWithdrawBondsBehaviour:
                 "bond": "100",
             },
         ]
+        keep_tx = {"to": "0xR", "data": "0xkeep", "value": 0}
+        keep_entry = {
+            "qid_bytes": b"\xbb" * 32,
+            "params": ([], [], [], []),
+            "tx": keep_tx,
+        }
+        stale_entry = {
+            "qid_bytes": b"\xdd" * 32,
+            "params": ([], [], [], []),
+            "tx": {"to": "0xR", "data": "0xstale", "value": 0},
+        }
         cache = self.behaviour.context.state.realitio_claim_build_cache
-        cache["0xrA-0xqAlreadySettled"] = {"to": "0xR", "data": "0xstale", "value": 0}
-        cache["0xrA-0xqStillClaimable"] = {"to": "0xR", "data": "0xkeep", "value": 0}
+        cache["0xrA-0xqAlreadySettled"] = stale_entry
+        cache["0xrA-0xqStillClaimable"] = keep_entry
 
         with (
             patch.object(
                 self.behaviour, "_get_claimable_responses", new=make_gen(responses)
             ),
+            # The still-claimable entry will hit the cache and trigger
+            # a stale-check simulation; mock True.
+            patch.object(self.behaviour, "_simulate_claim", new=make_gen(True)),
             patch.object(self.behaviour, "_try_build_single_claim", new=make_gen(None)),
         ):
             gen = self.behaviour._build_claim_txs()
-            exhaust_gen(gen)
+            result = exhaust_gen(gen)
 
+        # The still-claimable entry's tx is served from cache.
+        assert result == [keep_tx]
+        # The already-settled entry is evicted by the subgraph-driven
+        # eviction loop before any per-response processing.
         assert "0xrA-0xqAlreadySettled" not in cache
+        # The still-claimable entry remains cached after use.
         assert "0xrA-0xqStillClaimable" in cache
 
     # ─── _get_claimable_responses (subgraph filter, query shape) ─────────────
