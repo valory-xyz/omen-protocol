@@ -672,6 +672,49 @@ class TestRealitioWithdrawBondsBehaviour:
         assert result == [claim_tx]
         assert cache == {"0xrA-0xqA": entry}
 
+    def test_build_claim_txs_lazily_creates_cache_when_absent_on_state(self) -> None:
+        """Composed SharedState lacks the cache attr -> it's lazily created, no crash.
+
+        Regression for the production crash-loop: when this skill is
+        chained into a larger ABCI app, ``self.context.state`` resolves to
+        the COMPOSED skill's ``SharedState``, which does not run this
+        sub-skill's ``SharedState.__init__`` -- so ``realitio_claim_build_cache``
+        is absent there. A direct attribute read raised ``AttributeError``,
+        which under ``skill_exception_policy: stop_and_exit`` restart-looped
+        the agent. ``_build_claim_txs`` must lazily create the cache on the
+        state instead of assuming it exists.
+
+        Falsifiable: with the pre-fix direct read, ``exhaust_gen`` raises
+        ``AttributeError`` and the test errors.
+        """
+        # Reproduce the composed-state condition: the attribute the
+        # setup fixture pre-set is removed, so reads raise AttributeError
+        # exactly as on a real composed ``SharedState`` object.
+        del self.behaviour.context.state.realitio_claim_build_cache
+        responses = [
+            {"question": {"id": "0xrA-0xqA", "createdBlock": "111"}, "bond": "100"},
+        ]
+        entry = {
+            "qid_bytes": b"\xaa" * 32,
+            "params": ([], [], [], []),
+            "tx": {"to": "0xR", "data": "0xclaim", "value": 0},
+        }
+        with (
+            patch.object(
+                self.behaviour, "_get_claimable_responses", new=make_gen(responses)
+            ),
+            patch.object(
+                self.behaviour, "_try_build_single_claim", new=make_gen(entry)
+            ),
+        ):
+            result = exhaust_gen(self.behaviour._build_claim_txs())
+
+        # No AttributeError; the cache was created on the state and used.
+        assert result == [entry["tx"]]
+        assert self.behaviour.context.state.realitio_claim_build_cache == {
+            "0xrA-0xqA": entry
+        }
+
     def test_build_claim_txs_reuses_cached_claim_skipping_rpc_chain(self) -> None:
         """A question already in the cache reuses the cached tx; build chain is not invoked.
 

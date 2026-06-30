@@ -205,7 +205,22 @@ class RealitioWithdrawBondsBehaviour(RealitioWithdrawBondsBaseBehaviour):
         # replica converges". Multi-agent consumers should pin a
         # single subgraph endpoint across agents or move the cache
         # into consensus state.
-        cache: Dict[str, Dict[str, Any]] = self.context.state.realitio_claim_build_cache
+        # ``self.context.state`` resolves to the COMPOSED skill's
+        # ``SharedState``, not this sub-skill's, when the skill is chained
+        # into a larger ABCI app (e.g. market_resolver_abci /
+        # market_maker_abci). The composed ``SharedState`` does not run
+        # this skill's ``SharedState.__init__``, so the cache attribute is
+        # absent there and a direct read raises ``AttributeError`` -- which
+        # under ``skill_exception_policy: stop_and_exit`` crash-loops the
+        # agent. Lazily create the cache on the composed state on first use
+        # so the skill is correct for ANY consumer composition without each
+        # consumer having to re-declare the field.
+        cache: Optional[Dict[str, Dict[str, Any]]] = getattr(
+            self.context.state, "realitio_claim_build_cache", None
+        )
+        if cache is None:
+            cache = {}
+            self.context.state.realitio_claim_build_cache = cache
         claimable_ids = {resp["question"]["id"] for resp in unique_responses}
         evicted = [qid for qid in cache if qid not in claimable_ids]
         for qid in evicted:
