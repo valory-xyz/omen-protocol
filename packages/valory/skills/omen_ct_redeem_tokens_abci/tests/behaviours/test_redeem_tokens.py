@@ -388,6 +388,27 @@ class TestCtRedeemTokensBehaviourRedeemableMarkets:
         assert not result
         assert "0xcond1" in self.behaviour.context.state.ignored_ct_positions
 
+    def test_get_redeemable_markets_derived_loser_not_ignored(self) -> None:
+        """A loser whose payouts were derived from the subgraph answer is not ignored."""
+        self.behaviour.context.params.ct_redeem_tokens_min_payout = 1000
+        held = {"0xcond1": {1}}
+        markets = [
+            {
+                "address": "0xM1",
+                "condition_id": "0xcond1",
+                "outcome_slot_count": 2,
+                "payouts": ["0", "1"],
+                "payouts_reported": False,
+            }
+        ]
+        with patch.object(
+            self.behaviour, "_get_markets_for_conditions", new=make_gen(markets)
+        ):
+            gen = self.behaviour._get_redeemable_markets(held)
+            result = exhaust_gen(gen)
+        assert not result
+        assert "0xcond1" not in self.behaviour.context.state.ignored_ct_positions
+
     def test_get_redeemable_markets_no_winning_burn_losers(self) -> None:
         """Test losers are included for burning when ct_redeem_tokens_min_payout == 0."""
         self.behaviour.context.params.ct_redeem_tokens_min_payout = 0
@@ -852,7 +873,31 @@ class TestGetMarketsForConditions:
             result = exhaust_gen(gen)
         assert len(result) == 1
         assert result[0]["payouts"] == expected_payouts
+        assert result[0]["payouts_reported"] is False
         assert result[0]["question_id"] == "0xq1"
+
+    def test_get_markets_for_conditions_one_entry_per_condition(self) -> None:
+        """Two FPMMs on one condition yield one market, so resolve is queued once."""
+        entries = [
+            {
+                "id": fpmm,
+                "payouts": None,
+                "currentAnswer": "0x" + "0" * 64,
+                "templateId": "2",
+                "question": {"id": "0xq1", "data": "q"},
+                "conditions": [{"id": "0xCond1", "outcomeSlotCount": 2}],
+            }
+            for fpmm in ("0xMarketA", "0xMarketB")
+        ]
+        response = {"data": {"fixedProductMarketMakers": entries}}
+        with patch.object(
+            self.behaviour,
+            "get_omen_subgraph_result",
+            new=make_gen(response),
+        ):
+            gen = self.behaviour._get_markets_for_conditions(["0xcond1"])
+            result = exhaust_gen(gen)
+        assert [m["address"] for m in result] == ["0xMarketA"]
 
     @pytest.mark.parametrize(
         "answer,template_id",

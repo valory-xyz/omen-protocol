@@ -112,12 +112,6 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
     ) -> Optional[List[str]]:
         """Return the payouts RealitioProxy.resolve will report for a finalized answer.
 
-        The Omen subgraph sets ``payouts`` only once the condition is reported
-        on ConditionalTokens. A market that nobody resolved therefore has
-        ``payouts: null`` and would never be selected, so the resolve step in
-        ``_build_redeem_txs`` would never run for it. This mirrors
-        RealitioProxy.getSingleSelectPayouts so that such markets are selected.
-
         :param answer: the market's ``currentAnswer`` (hex string) or None.
         :param template_id: the Realitio template id of the question.
         :param outcome_slot_count: number of outcomes of the condition.
@@ -228,7 +222,9 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
             elif burn_losers:
                 redeemable.append(market)
                 n_losers += 1
-            else:
+            elif market.get("payouts_reported", True):
+                # Only ignore a loser confirmed by CT; payouts derived from
+                # the subgraph answer may differ from Realitio's resultFor.
                 self.shared_state.ignored_ct_positions.add(condition_id)
 
         self.context.logger.info(
@@ -354,26 +350,31 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                 condition = conditions[0]
                 if condition.get("outcomeSlotCount") is None:
                     continue
+                template_id = int(entry.get("templateId", 0) or 0)
+                payouts_reported = bool(entry.get("payouts"))
                 payouts = entry.get("payouts") or self._payouts_from_answer(
                     entry.get("currentAnswer"),
-                    int(entry.get("templateId", 0) or 0),
+                    template_id,
                     int(condition["outcomeSlotCount"]),
                 )
                 if not payouts or not any(float(p) > 0 for p in payouts):
                     continue
-                address = entry["id"]
-                if address not in seen:
-                    seen.add(address)
+                # One entry per condition: several FPMMs can share a condition,
+                # and a second resolve of it would revert the whole multisend.
+                condition_id = condition["id"].lower()
+                if condition_id not in seen:
+                    seen.add(condition_id)
                     question = entry.get("question", {}) or {}
                     all_markets.append(
                         {
-                            "address": address,
+                            "address": entry["id"],
                             "condition_id": condition["id"],
                             "outcome_slot_count": condition["outcomeSlotCount"],
                             "payouts": payouts,
+                            "payouts_reported": payouts_reported,
                             "question_id": question.get("id", ""),
                             "question_data": question.get("data", ""),
-                            "template_id": int(entry.get("templateId", 0) or 0),
+                            "template_id": template_id,
                         }
                     )
 
