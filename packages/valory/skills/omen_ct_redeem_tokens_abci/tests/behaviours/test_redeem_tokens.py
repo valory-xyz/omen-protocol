@@ -899,6 +899,34 @@ class TestGetMarketsForConditions:
             result = exhaust_gen(gen)
         assert [m["address"] for m in result] == ["0xMarketA"]
 
+    @pytest.mark.parametrize("reported_first", [False, True])
+    def test_get_markets_for_conditions_prefers_reported_payouts(
+        self, reported_first: bool
+    ) -> None:
+        """When FPMMs share a condition, the one with reported payouts is kept."""
+        derived = {
+            "id": "0xDerived",
+            "payouts": None,
+            "currentAnswer": "0x" + "0" * 64,
+            "templateId": "2",
+            "question": {"id": "0xq1", "data": "q"},
+            "conditions": [{"id": "0xCond1", "outcomeSlotCount": 2}],
+        }
+        reported = dict(derived, id="0xReported", payouts=["0", "1"])
+        entries = [reported, derived] if reported_first else [derived, reported]
+        response = {"data": {"fixedProductMarketMakers": entries}}
+        with patch.object(
+            self.behaviour,
+            "get_omen_subgraph_result",
+            new=make_gen(response),
+        ):
+            gen = self.behaviour._get_markets_for_conditions(["0xcond1"])
+            result = exhaust_gen(gen)
+        assert len(result) == 1
+        assert result[0]["address"] == "0xReported"
+        assert result[0]["payouts"] == ["0", "1"]
+        assert result[0]["payouts_reported"] is True
+
     @pytest.mark.parametrize(
         "answer,template_id",
         [

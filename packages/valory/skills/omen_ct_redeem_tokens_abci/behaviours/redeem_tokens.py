@@ -326,8 +326,7 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
     ) -> Generator[None, None, List[Dict[str, Any]]]:
         """Query the Omen subgraph for finalized markets matching given conditions."""
         now = str(self.last_synced_timestamp)
-        all_markets: List[Dict[str, Any]] = []
-        seen: set = set()
+        markets_by_condition: Dict[str, Dict[str, Any]] = {}
 
         for i in range(0, len(condition_ids), CONDITION_ID_BATCH_SIZE):
             batch = condition_ids[i : i + CONDITION_ID_BATCH_SIZE]
@@ -361,24 +360,25 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                     continue
                 # One entry per condition: several FPMMs can share a condition,
                 # and a second resolve of it would revert the whole multisend.
+                # Prefer an FPMM with reported payouts over a derived one.
                 condition_id = condition["id"].lower()
-                if condition_id not in seen:
-                    seen.add(condition_id)
+                stored = markets_by_condition.get(condition_id)
+                if stored is None or (
+                    payouts_reported and not stored["payouts_reported"]
+                ):
                     question = entry.get("question", {}) or {}
-                    all_markets.append(
-                        {
-                            "address": entry["id"],
-                            "condition_id": condition["id"],
-                            "outcome_slot_count": condition["outcomeSlotCount"],
-                            "payouts": payouts,
-                            "payouts_reported": payouts_reported,
-                            "question_id": question.get("id", ""),
-                            "question_data": question.get("data", ""),
-                            "template_id": template_id,
-                        }
-                    )
+                    markets_by_condition[condition_id] = {
+                        "address": entry["id"],
+                        "condition_id": condition["id"],
+                        "outcome_slot_count": condition["outcomeSlotCount"],
+                        "payouts": payouts,
+                        "payouts_reported": payouts_reported,
+                        "question_id": question.get("id", ""),
+                        "question_data": question.get("data", ""),
+                        "template_id": template_id,
+                    }
 
-        return all_markets
+        return list(markets_by_condition.values())
 
     def _check_resolved(self, condition_id: str) -> Generator[None, None, bool]:
         """Check if a condition is resolved on ConditionalTokens."""
