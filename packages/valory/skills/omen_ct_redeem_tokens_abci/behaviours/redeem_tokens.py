@@ -41,6 +41,8 @@ from packages.valory.skills.omen_ct_redeem_tokens_abci.rounds import CtRedeemTok
 
 SUBGRAPH_PAGE_SIZE = 1000
 CONDITION_ID_BATCH_SIZE = 100
+INVALID_ANSWER = 2**256 - 1
+SINGLE_SELECT_TEMPLATE_IDS = (0, 2)
 
 USER_POSITIONS_QUERY = Template("""{
     user(id: "$safe") {
@@ -68,6 +70,7 @@ MARKETS_BY_CONDITIONS_QUERY = Template("""{
         conditions_: {id_in: [$condition_ids]}
         answerFinalizedTimestamp_not: null
         answerFinalizedTimestamp_lt: "$now"
+        isPendingArbitration: false
       }
       first: $page_size
       orderBy: id
@@ -75,6 +78,7 @@ MARKETS_BY_CONDITIONS_QUERY = Template("""{
     ) {
       id
       payouts
+      currentAnswer
       templateId
       question {
         id
@@ -101,6 +105,32 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                 if idx_set == (1 << i) and float(payout) > 0:
                     return True
         return False
+
+    @staticmethod
+    def _payouts_from_answer(
+        answer: Optional[str], template_id: int, outcome_slot_count: int
+    ) -> Optional[List[str]]:
+        """Return the payouts RealitioProxy.resolve will report for a finalized answer.
+
+        The Omen subgraph sets ``payouts`` only once the condition is reported
+        on ConditionalTokens. A market that nobody resolved therefore has
+        ``payouts: null`` and would never be selected, so the resolve step in
+        ``_build_redeem_txs`` would never run for it. This mirrors
+        RealitioProxy.getSingleSelectPayouts so that such markets are selected.
+
+        :param answer: the market's ``currentAnswer`` (hex string) or None.
+        :param template_id: the Realitio template id of the question.
+        :param outcome_slot_count: number of outcomes of the condition.
+        :return: the payout vector, or None if it cannot be derived.
+        """
+        if answer is None or template_id not in SINGLE_SELECT_TEMPLATE_IDS:
+            return None
+        value = int(answer, 16)
+        if value == INVALID_ANSWER:
+            return ["1"] * outcome_slot_count
+        if value >= outcome_slot_count:
+            return None
+        return ["1" if i == value else "0" for i in range(outcome_slot_count)]
 
     def async_act(self) -> Generator:
         """Single-round act: query → build → wrap → settle-or-skip."""
@@ -324,7 +354,11 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                 condition = conditions[0]
                 if condition.get("outcomeSlotCount") is None:
                     continue
-                payouts = entry.get("payouts")
+                payouts = entry.get("payouts") or self._payouts_from_answer(
+                    entry.get("currentAnswer"),
+                    int(entry.get("templateId", 0) or 0),
+                    int(condition["outcomeSlotCount"]),
+                )
                 if not payouts or not any(float(p) > 0 for p in payouts):
                     continue
                 address = entry["id"]
