@@ -388,6 +388,27 @@ class TestCtRedeemTokensBehaviourRedeemableMarkets:
         assert not result
         assert "0xcond1" in self.behaviour.context.state.ignored_ct_positions
 
+    def test_get_redeemable_markets_derived_loser_not_ignored(self) -> None:
+        """A loser whose payouts were derived from the subgraph answer is not ignored."""
+        self.behaviour.context.params.ct_redeem_tokens_min_payout = 1000
+        held = {"0xcond1": {1}}
+        markets = [
+            {
+                "address": "0xM1",
+                "condition_id": "0xcond1",
+                "outcome_slot_count": 2,
+                "payouts": ["0", "1"],
+                "payouts_reported": False,
+            }
+        ]
+        with patch.object(
+            self.behaviour, "_get_markets_for_conditions", new=make_gen(markets)
+        ):
+            gen = self.behaviour._get_redeemable_markets(held)
+            result = exhaust_gen(gen)
+        assert not result
+        assert "0xcond1" not in self.behaviour.context.state.ignored_ct_positions
+
     def test_get_redeemable_markets_no_winning_burn_losers(self) -> None:
         """Test losers are included for burning when ct_redeem_tokens_min_payout == 0."""
         self.behaviour.context.params.ct_redeem_tokens_min_payout = 0
@@ -816,6 +837,111 @@ class TestGetMarketsForConditions:
         assert len(result) == 1
         assert result[0]["address"] == "0xMarket1"
         assert result[0]["condition_id"] == "0xCond1"
+
+    @pytest.mark.parametrize(
+        "answer,expected_payouts",
+        [
+            ("0x" + "0" * 64, ["1", "0"]),
+            ("0x" + "0" * 63 + "1", ["0", "1"]),
+            ("0x" + "f" * 64, ["1", "1"]),
+        ],
+    )
+    def test_get_markets_for_conditions_unreported_condition(
+        self, answer: str, expected_payouts: list
+    ) -> None:
+        """A finalized market nobody resolved on CT (payouts null) is selected from its answer."""
+        response = {
+            "data": {
+                "fixedProductMarketMakers": [
+                    {
+                        "id": "0xMarket1",
+                        "payouts": None,
+                        "currentAnswer": answer,
+                        "templateId": "2",
+                        "question": {"id": "0xq1", "data": "question?"},
+                        "conditions": [{"id": "0xCond1", "outcomeSlotCount": 2}],
+                    }
+                ]
+            }
+        }
+        with patch.object(
+            self.behaviour,
+            "get_omen_subgraph_result",
+            new=make_gen(response),
+        ):
+            gen = self.behaviour._get_markets_for_conditions(["0xCond1"])
+            result = exhaust_gen(gen)
+        assert len(result) == 1
+        assert result[0]["payouts"] == expected_payouts
+        assert result[0]["payouts_reported"] is False
+        assert result[0]["question_id"] == "0xq1"
+
+    def test_get_markets_for_conditions_one_entry_per_condition(self) -> None:
+        """Two FPMMs on one condition yield one market, so resolve is queued once."""
+        entries = [
+            {
+                "id": fpmm,
+                "payouts": None,
+                "currentAnswer": "0x" + "0" * 64,
+                "templateId": "2",
+                "question": {"id": "0xq1", "data": "q"},
+                "conditions": [{"id": "0xCond1", "outcomeSlotCount": 2}],
+            }
+            for fpmm in ("0xMarketA", "0xMarketB")
+        ]
+        response = {"data": {"fixedProductMarketMakers": entries}}
+        with patch.object(
+            self.behaviour,
+            "get_omen_subgraph_result",
+            new=make_gen(response),
+        ):
+            gen = self.behaviour._get_markets_for_conditions(["0xcond1"])
+            result = exhaust_gen(gen)
+        assert [m["address"] for m in result] == ["0xMarketA"]
+
+    @pytest.mark.parametrize("reported_first", [False, True])
+    def test_get_markets_for_conditions_prefers_reported_payouts(
+        self, reported_first: bool
+    ) -> None:
+        """When FPMMs share a condition, the one with reported payouts is kept."""
+        derived = {
+            "id": "0xDerived",
+            "payouts": None,
+            "currentAnswer": "0x" + "0" * 64,
+            "templateId": "2",
+            "question": {"id": "0xq1", "data": "q"},
+            "conditions": [{"id": "0xCond1", "outcomeSlotCount": 2}],
+        }
+        reported = dict(derived, id="0xReported", payouts=["0", "1"])
+        entries = [reported, derived] if reported_first else [derived, reported]
+        response = {"data": {"fixedProductMarketMakers": entries}}
+        with patch.object(
+            self.behaviour,
+            "get_omen_subgraph_result",
+            new=make_gen(response),
+        ):
+            gen = self.behaviour._get_markets_for_conditions(["0xcond1"])
+            result = exhaust_gen(gen)
+        assert len(result) == 1
+        assert result[0]["address"] == "0xReported"
+        assert result[0]["payouts"] == ["0", "1"]
+        assert result[0]["payouts_reported"] is True
+
+    @pytest.mark.parametrize(
+        "answer,template_id",
+        [
+            (None, 2),
+            ("0x" + "0" * 63 + "2", 2),
+            ("0x" + "0" * 64, 1),
+        ],
+    )
+    def test_payouts_from_answer_not_derivable(
+        self, answer: Any, template_id: int
+    ) -> None:
+        """No payouts are derived for a missing answer, an out-of-range index, or a non single-select template."""
+        assert (
+            CtRedeemTokensBehaviour._payouts_from_answer(answer, template_id, 2) is None
+        )
 
     def test_get_markets_for_conditions_dedup(self) -> None:
         """Test _get_markets_for_conditions deduplicates market addresses."""

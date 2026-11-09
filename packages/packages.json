@@ -4,7 +4,7 @@
         "contract/valory/realitio_proxy/0.1.0": "bafybeibutej7uzucill5ohb3xxu245vo32kg5vchpqondwdfomixx2psba",
         "contract/valory/conditional_tokens/0.1.0": "bafybeifqpw3hnllwy3s2ktcsfup3usgaykh5gbhieyf2wb2s4iwemykn2i",
         "contract/valory/fpmm/0.1.0": "bafybeiceekyspyvqkzint67psqumphhmiiwkcy5satkm4kzo62i56mbkcm",
-        "skill/valory/omen_ct_redeem_tokens_abci/0.1.0": "bafybeibgvy6shgzjcabm2gcmjc2gft7ja3g46jbmcylgxrlscsmcw3aaqm",
+        "skill/valory/omen_ct_redeem_tokens_abci/0.1.0": "bafybeihabn3duppzfhpyrxyw5xr26lrv6qgbwpw4gj4bemkszsguv2jzyi",
         "skill/valory/omen_fpmm_remove_liquidity_abci/0.1.0": "bafybeiew2i2wp4jvtbw5ppxdakw2qvte7ulz4kkfgczshbbqfbchyg4rgm",
         "skill/valory/omen_realitio_withdraw_bonds_abci/0.1.0": "bafybeickxlykeaqxuyw3mp54kdrlqx7bmqotd66pnx2rozzviolr3t4i6m"
     },

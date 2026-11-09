@@ -41,6 +41,8 @@ from packages.valory.skills.omen_ct_redeem_tokens_abci.rounds import CtRedeemTok
 
 SUBGRAPH_PAGE_SIZE = 1000
 CONDITION_ID_BATCH_SIZE = 100
+INVALID_ANSWER = 2**256 - 1
+SINGLE_SELECT_TEMPLATE_IDS = (0, 2)
 
 USER_POSITIONS_QUERY = Template("""{
     user(id: "$safe") {
@@ -68,6 +70,7 @@ MARKETS_BY_CONDITIONS_QUERY = Template("""{
         conditions_: {id_in: [$condition_ids]}
         answerFinalizedTimestamp_not: null
         answerFinalizedTimestamp_lt: "$now"
+        isPendingArbitration: false
       }
       first: $page_size
       orderBy: id
@@ -75,6 +78,7 @@ MARKETS_BY_CONDITIONS_QUERY = Template("""{
     ) {
       id
       payouts
+      currentAnswer
       templateId
       question {
         id
@@ -101,6 +105,26 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                 if idx_set == (1 << i) and float(payout) > 0:
                     return True
         return False
+
+    @staticmethod
+    def _payouts_from_answer(
+        answer: Optional[str], template_id: int, outcome_slot_count: int
+    ) -> Optional[List[str]]:
+        """Return the payouts RealitioProxy.resolve will report for a finalized answer.
+
+        :param answer: the market's ``currentAnswer`` (hex string) or None.
+        :param template_id: the Realitio template id of the question.
+        :param outcome_slot_count: number of outcomes of the condition.
+        :return: the payout vector, or None if it cannot be derived.
+        """
+        if answer is None or template_id not in SINGLE_SELECT_TEMPLATE_IDS:
+            return None
+        value = int(answer, 16)
+        if value == INVALID_ANSWER:
+            return ["1"] * outcome_slot_count
+        if value >= outcome_slot_count:
+            return None
+        return ["1" if i == value else "0" for i in range(outcome_slot_count)]
 
     def async_act(self) -> Generator:
         """Single-round act: query → build → wrap → settle-or-skip."""
@@ -198,7 +222,9 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
             elif burn_losers:
                 redeemable.append(market)
                 n_losers += 1
-            else:
+            elif market.get("payouts_reported", True):
+                # Only ignore a loser confirmed by CT; payouts derived from
+                # the subgraph answer may differ from Realitio's resultFor.
                 self.shared_state.ignored_ct_positions.add(condition_id)
 
         self.context.logger.info(
@@ -300,8 +326,7 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
     ) -> Generator[None, None, List[Dict[str, Any]]]:
         """Query the Omen subgraph for finalized markets matching given conditions."""
         now = str(self.last_synced_timestamp)
-        all_markets: List[Dict[str, Any]] = []
-        seen: set = set()
+        markets_by_condition: Dict[str, Dict[str, Any]] = {}
 
         for i in range(0, len(condition_ids), CONDITION_ID_BATCH_SIZE):
             batch = condition_ids[i : i + CONDITION_ID_BATCH_SIZE]
@@ -324,26 +349,36 @@ class CtRedeemTokensBehaviour(CtRedeemTokensBaseBehaviour):
                 condition = conditions[0]
                 if condition.get("outcomeSlotCount") is None:
                     continue
-                payouts = entry.get("payouts")
+                template_id = int(entry.get("templateId", 0) or 0)
+                payouts_reported = bool(entry.get("payouts"))
+                payouts = entry.get("payouts") or self._payouts_from_answer(
+                    entry.get("currentAnswer"),
+                    template_id,
+                    int(condition["outcomeSlotCount"]),
+                )
                 if not payouts or not any(float(p) > 0 for p in payouts):
                     continue
-                address = entry["id"]
-                if address not in seen:
-                    seen.add(address)
+                # One entry per condition: several FPMMs can share a condition,
+                # and a second resolve of it would revert the whole multisend.
+                # Prefer an FPMM with reported payouts over a derived one.
+                condition_id = condition["id"].lower()
+                stored = markets_by_condition.get(condition_id)
+                if stored is None or (
+                    payouts_reported and not stored["payouts_reported"]
+                ):
                     question = entry.get("question", {}) or {}
-                    all_markets.append(
-                        {
-                            "address": address,
-                            "condition_id": condition["id"],
-                            "outcome_slot_count": condition["outcomeSlotCount"],
-                            "payouts": payouts,
-                            "question_id": question.get("id", ""),
-                            "question_data": question.get("data", ""),
-                            "template_id": int(entry.get("templateId", 0) or 0),
-                        }
-                    )
+                    markets_by_condition[condition_id] = {
+                        "address": entry["id"],
+                        "condition_id": condition["id"],
+                        "outcome_slot_count": condition["outcomeSlotCount"],
+                        "payouts": payouts,
+                        "payouts_reported": payouts_reported,
+                        "question_id": question.get("id", ""),
+                        "question_data": question.get("data", ""),
+                        "template_id": template_id,
+                    }
 
-        return all_markets
+        return list(markets_by_condition.values())
 
     def _check_resolved(self, condition_id: str) -> Generator[None, None, bool]:
         """Check if a condition is resolved on ConditionalTokens."""
