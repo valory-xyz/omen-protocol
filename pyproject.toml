@@ -46,7 +46,7 @@ Repository = "https://github.com/valory-xyz/omen-protocol"
 
 [dependency-groups]
 dev = [
-    "tomte[cli, tests] @ git+https://github.com/valory-xyz/tomte.git@0819eea387c622cc53b398a2d3ea86e94a55cf82",
+    "tomte[cli, tests]==0.7.4",
     "pip>=24.0",
 ]
 
@@ -63,6 +63,23 @@ override-dependencies = ["cffi<2.1"]
 # and open-aea upstreams (abstract_round_abci, transaction_settlement_abci,
 # contract_api, gnosis_safe, multisend). No additional pins needed.
 upstream_pins = []
+# filelock advisories disclosed 2026-10-17, 2026-10-20 and 2026-10-23 against the
+# version safety's own tox venv installs; no shipped code uses that filelock.
+safety_ignores = [
+    "SFTY-20261017-54654",
+    "SFTY-20261017-57659",
+    "SFTY-20261017-72390",
+    "SFTY-20261020-11422",
+    "SFTY-20261020-13394",
+    "SFTY-20261020-18367",
+    "SFTY-20261020-25530",
+    "SFTY-20261020-34461",
+    "SFTY-20261020-81101",
+    "SFTY-20261020-91319",
+    "SFTY-20261023-10299",
+    "SFTY-20261023-16869",
+    "SFTY-20261023-24590",
+]
 gitleaks_extra_regexes = [
     # IPFS CIDv1 hashes used by Open Autonomy package fingerprints.
     "bafybei[a-z2-7]{52}",
@@ -73,7 +90,7 @@ gitleaks_extra_regexes = [
     # `participant_to_<name>` namespace; high-entropy snake_case identifier.
     "participant_to_[a-z][a-z0-9_]+",
 ]
-tomte_dep_pin = " @ git+https://github.com/valory-xyz/tomte.git@0819eea387c622cc53b398a2d3ea86e94a55cf82"
+tomte_dep_pin = "==0.7.4"
 
 [tool.uv.build-backend]
 module-name = ["packages"]

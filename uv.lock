@@ -1841,7 +1841,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pip", specifier = ">=24.0" },
-    { name = "tomte", extras = ["cli", "tests"], git = "https://github.com/valory-xyz/tomte.git?rev=0819eea387c622cc53b398a2d3ea86e94a55cf82" },
+    { name = "tomte", extras = ["cli", "tests"], specifier = "==0.7.4" },
 ]
 
 [[package]]
@@ -3113,8 +3113,12 @@ wheels = [
 
 [[package]]
 name = "tomte"
-version = "0.7.0"
-source = { git = "https://github.com/valory-xyz/tomte.git?rev=0819eea387c622cc53b398a2d3ea86e94a55cf82#0819eea387c622cc53b398a2d3ea86e94a55cf82" }
+version = "0.7.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/05/7ec88bed44e641f0044546d0f76dac8f94f9f91eec1d6273ad5ec085db8a/tomte-0.7.4.tar.gz", hash = "sha256:6ad5df591f1b5252ed47103f671594feec9f3db504de3cafbc8a33a84168355c", size = 49345, upload-time = "2026-11-18T11:56:45.798Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/b2/8657ba25887a5ba281ca9803be84694b712d5672d11487674ddfab77997f/tomte-0.7.4-py3-none-any.whl", hash = "sha256:1a7634141db7ed5fd21728b036b17e741509c8eb16b0d64a097195c647ab345e", size = 57584, upload-time = "2026-11-18T11:56:44.735Z" },
+]
 
 [package.optional-dependencies]
 cli = [
